@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: campusvibe-pilot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      - key: CAMPUS_HOSTED
+        value: "1"
+      - key: CAMPUSVIBE_JWT_SECRET
+        generateValue: true
+      - key: MODERATOR_TOKEN
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false

@@ -1,0 +1,23 @@
+# Keep credentials and generated artifacts OUT of GitHub
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.db
+*.sqlite3
+__pycache__/
+.pytest_cache/
+.dart_tool/
+.flutter-plugins*
+.packages
+build/
+mobile/android/.gradle/
+mobile/android/local.properties
+*.apk
+*.aab
+.idea/
+.vscode/
