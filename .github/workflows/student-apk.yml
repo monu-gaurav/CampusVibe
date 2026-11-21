@@ -32,8 +32,8 @@ jobs:
               raise SystemExit('Supply the public HTTPS origin')
           url=u.geturl().rstrip('/')+'/mobile/config'
           with urllib.request.urlopen(url,timeout=90) as r: config=json.load(r)
-          if config.get('app')!='CampusVibe' or config.get('version')!=3 or not config.get('google_client_id'):
-              raise SystemExit('Configure Google OAuth on the backend first')
+          if config.get('app')!='CampusVibe' or config.get('version')!=3:
+              raise SystemExit('CampusVibe API configuration check failed')
           PY
       - name: Test and sign APK
         working-directory: mobile

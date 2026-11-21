@@ -10,7 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 const plum = Color(0xFF352044);
 const lavender = Color(0xFFA88BDB);
 const cream = Color(0xFFFFF8F0);
-const packagedServer = String.fromEnvironment('API_BASE_URL');
+const packagedServer = String.fromEnvironment('API_BASE_URL', defaultValue: 'https://campusvibe-monu-pilot.onrender.com');
 String api = packagedServer;
 String httpsOrigin(String value) {
   final u = Uri.tryParse(value.trim());
@@ -46,7 +46,7 @@ const storage = FlutterSecureStorage();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final previous = await storage.read(key: 'pilot');
-  api = packagedServer.isEmpty ? (previous ?? '') : httpsOrigin(packagedServer);
+  api = httpsOrigin(packagedServer);
   if (previous != null && previous != api || previous == null) {
     await storage.deleteAll();
   }
@@ -91,36 +91,79 @@ class EntryPage extends StatefulWidget {
 
 class _EntryPageState extends State<EntryPage> {
   bool busy = false;
-  bool checking = false;
   String error = '';
   String googleId = '';
+
+  final email = TextEditingController();
+  final password = TextEditingController();
+  final name = TextEditingController();
+  bool registering = false;
 
   @override
   void initState() {
     super.initState();
-    if (api.isEmpty) {
-      error = 'CampusVibe backend has not been configured yet. '
-          'Install a release APK built with API_BASE_URL set to your HTTPS server.';
-    } else {
-      configure();
-    }
+    if (api.isNotEmpty) configure();
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    name.dispose();
+    super.dispose();
   }
 
   Future<void> configure() async {
-    if (checking || api.isEmpty) return;
-    setState(() { checking = true; error = ''; });
     try {
-      final config = await serverConfig(httpsOrigin(api));
-      final webClientId = config['google_client_id'];
-      if (webClientId is! String || webClientId.trim().isEmpty) {
-        throw const FormatException('Google Sign-In is not configured on the server.');
-      }
-      if (mounted) setState(() => googleId = webClientId);
+      final config = await serverConfig(api);
+      if (mounted) setState(() => googleId = config['google_client_id'] as String? ?? '');
     } catch (_) {
-      if (mounted) setState(() => error = 'Cannot connect to Google login. '
-          'Check the campus backend and Google OAuth setup.');
+      // Email sign-in works independently of Google provider discovery.
+    }
+  }
+
+  Future<void> withEmail() async {
+    if (busy) return;
+    final address = email.text.trim();
+    final secret = password.text;
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(address) ||
+        secret.isEmpty || (registering && (name.text.trim().length < 2 || secret.length < 10))) {
+      setState(() => error = registering
+          ? 'Enter your name, email and a password of at least 10 characters.'
+          : 'Enter your email and password.');
+      return;
+    }
+    setState(() { busy = true; error = ''; });
+    final credentials = {'email': address, 'password': secret};
+    Future<http.Response> post(String path, Map<String, String> body) =>
+        http.post(Uri.parse('$api/auth/$path'), headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body)).timeout(const Duration(seconds: 90));
+    try {
+      if (registering) {
+        final created = await post('register', {...credentials, 'name': name.text.trim()});
+        if (created.statusCode != 201) {
+          if (mounted) setState(() => error = created.statusCode == 409 ?
+            'An account with this email already exists. Sign in below.' :
+            'Could not create the account. Check your details and try again.');
+          return;
+        }
+        if (!mounted) return;
+        setState(() => registering = false);
+      }
+      final result = await post('login', credentials);
+      if (result.statusCode != 200) {
+        if (mounted) setState(() => error = result.statusCode == 401
+            ? 'Email or password is incorrect.' : 'Sign-in unavailable. Try again shortly.');
+        return;
+      }
+      final token = jsonDecode(result.body)['access_token'] as String;
+      await storage.write(key: 'token', value: token);
+      if (mounted) Navigator.pushReplacement(context,
+          MaterialPageRoute(builder: (_) => HomePage(token: token)));
+    } catch (_) {
+      if (mounted) setState(() => error = 'Could not reach CampusVibe. Check your internet and retry.');
     } finally {
-      if (mounted) setState(() => checking = false);
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -177,22 +220,32 @@ class _EntryPageState extends State<EntryPage> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
-              if (checking) const LinearProgressIndicator(),
-              if (error.isNotEmpty) ...[
-                Text(error, textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red)),
-                const SizedBox(height: 16),
+              if (registering) ...[
+                TextField(controller: name, enabled: !busy, maxLength: 120,
+                    decoration: const InputDecoration(labelText: 'Full name')),
+                const SizedBox(height: 12),
               ],
-              SizedBox(width: double.infinity, child: FilledButton.icon(
-                onPressed: busy || checking || googleId.isEmpty ? null : withGoogle,
-                icon: const Icon(Icons.account_circle_outlined),
-                label: Text(busy ? 'Signing in…' : 'Sign in with Google'),
-              )),
-              if (api.isNotEmpty && googleId.isEmpty && !checking)
-                TextButton(onPressed: configure, child: const Text('Retry connection')),
+              TextField(controller: email, enabled: !busy, autocorrect: false,
+                  keyboardType: TextInputType.emailAddress,
+                  autofillHints: const [AutofillHints.email],
+                  decoration: const InputDecoration(labelText: 'Email')),
               const SizedBox(height: 12),
-              const Text('Your Google account is verified by the campus server.',
-                textAlign: TextAlign.center),
+              TextField(controller: password, enabled: !busy, obscureText: true,
+                  maxLength: registering ? 128 : null,
+                  onSubmitted: (_) => withEmail(),
+                  decoration: InputDecoration(labelText: 'Password',
+                    helperText: registering ? 'Use at least 10 characters' : null)),
+              if (error.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+              const SizedBox(height: 16),
+              SizedBox(width: double.infinity, child: FilledButton(
+                onPressed: busy ? null : withEmail,
+                child: Text(busy ? 'Please wait…' : registering ? 'Create account' : 'Sign in with email'))),
+              TextButton(onPressed: busy ? null : () => setState(() {
+                registering = !registering; error = '';
+              }), child: Text(registering ? 'Already registered? Sign in' : 'New here? Create an account')),
+              if (googleId.isNotEmpty) OutlinedButton.icon(onPressed: busy ? null : withGoogle,
+                icon: const Icon(Icons.account_circle_outlined), label: const Text('Sign in with Google')),
             ]),
           ),
         ),
