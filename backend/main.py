@@ -162,6 +162,7 @@ def profile_me(u: User = Depends(current_user), db: Session = Depends(db_session
     v = db.get(Verification, u.id)
     return {
         **view(u),
+        "photo_version": db.scalar(select(ProfilePhoto.version).where(ProfilePhoto.user_id == u.id)),
         "study_visible": study_visible(u, v),
         "email_delivery": bool(mobile_config()["email_signup"]),
         "email_verified": bool(
@@ -427,6 +428,7 @@ def discover(
     candidates = db.scalars(select(User).outerjoin(Verification, Verification.user_id == User.id)
         .where(User.id != u.id, eligible == True, func.lower(User.college) == u.college.lower())
         .order_by(overlap.desc(), User.id).limit(100)).all()
+    photos = dict(db.execute(select(ProfilePhoto.user_id, ProfilePhoto.version).where(ProfilePhoto.user_id.in_([p.id for p in candidates]))).all())
     out = []
     for person in candidates:
         if blocked(db, u.id, person.id) or (
@@ -446,6 +448,7 @@ def discover(
             {
                 "id": person.id,
                 "name": person.name,
+                "photo_version": photos.get(person.id),
                 "college": person.college,
                 "branch": person.branch,
                 "bio": person.bio,
@@ -1179,6 +1182,7 @@ def delete_account(u=Depends(current_user), db=Depends(db_session)):
     from sqlalchemy import delete
 
     uid = u.id
+    db.execute(delete(ProfilePhoto).where(ProfilePhoto.user_id==uid))
     db.execute(delete(GoogleIdentity).where(GoogleIdentity.user_id==uid))
     db.execute(
         delete(FocusSession).where(
@@ -1477,3 +1481,43 @@ def google_auth(body:GoogleCredentials,db=Depends(db_session)):
         if identity:return session_for(db.get(User,identity.user_id))
         raise HTTPException(409,"Use the original sign-in method for this email")
     return session_for(u)
+
+class ProfilePhoto(Base):
+    __tablename__ = "profile_photos"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    version = Column(String(32), nullable=False)
+    image = Column(LargeBinary, nullable=False)
+
+@app.put("/profile/photo")
+def upload_portrait(file: UploadFile = File(...), u=Depends(current_user), db=Depends(db_session)):
+    from io import BytesIO
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    from uuid import uuid4
+    raw = file.file.read(4 * 1024 * 1024 + 1)
+    if len(raw) > 4 * 1024 * 1024:
+        raise HTTPException(413, "Choose a photo up to 4 MB.")
+    try:
+        with Image.open(BytesIO(raw), formats=["JPEG","PNG"]) as image:
+            if image.width * image.height > 12000000:
+                raise HTTPException(422, "Choose a smaller photo.")
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            image.thumbnail((640,800))
+            encoded = BytesIO()
+            image.save(encoded, "JPEG", quality=85)
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(422, "Choose a JPEG or PNG photo.")
+    photo = db.get(ProfilePhoto,u.id) or ProfilePhoto(user_id=u.id)
+    photo.image = encoded.getvalue()
+    photo.version = uuid4().hex
+    db.add(photo)
+    db.commit()
+    return {"version":photo.version}
+
+@app.get("/profile/photo/{uid}")
+def portrait(uid:int, kind:str="study", u=Depends(current_user),db=Depends(db_session)):
+    if uid != u.id:
+        validate_pair(db,u,uid,kind)
+    photo=db.get(ProfilePhoto,uid)
+    if not photo:
+        raise HTTPException(404,"No profile photo")
+    return Response(photo.image,media_type="image/jpeg",headers={"Cache-Control":"private, no-store"})

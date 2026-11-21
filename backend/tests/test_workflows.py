@@ -286,3 +286,16 @@ def test_normal_login_study_chat_without_otp():
     c.put("/profile/study",headers=hb,json={"college":"Test Campus","labels":[],"visible":False})
     assert not c.get("/discover",headers=ha).json()
     assert c.get(f"/messages/{b}",headers=ha).status_code==200
+
+def test_portrait_access_follows_discovery_and_blocks():
+    from PIL import Image
+    import io
+    a, ah=student(1)
+    b, bh=student(2)
+    data=io.BytesIO()
+    Image.new("RGB",(12,12)).save(data,"PNG")
+    assert c.put("/profile/photo",headers=ah,files={"file":("pic.png",data.getvalue(),"image/png")}).status_code==200
+    assert c.get("/discover",headers=bh).json()[0]["photo_version"]
+    assert c.get(f"/profile/photo/{a}",headers=bh).headers["content-type"]=="image/jpeg"
+    c.post(f"/blocks/{b}",headers=ah)
+    assert c.get(f"/profile/photo/{a}",headers=bh).status_code==403

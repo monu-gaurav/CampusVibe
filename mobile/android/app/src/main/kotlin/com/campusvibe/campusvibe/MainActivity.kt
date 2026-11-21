@@ -12,12 +12,12 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
         MethodChannel(engine.dartExecutor.binaryMessenger, "campusvibe/files").setMethodCallHandler { call,result ->
-            if(call.method !in listOf("pick","save")) { result.notImplemented();return@setMethodCallHandler }
+            if(call.method !in listOf("pick","pickPhoto","save")) { result.notImplemented();return@setMethodCallHandler }
             if(pending!=null){result.error("busy","Finish current file selection",null);return@setMethodCallHandler}
-            val picking=call.method=="pick"
+            val picking=call.method!="save"
             val intent=Intent(if(picking)Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
-            if(picking){ intent.type="*/*";intent.putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("image/jpeg","image/png","application/pdf")) }
+            if(picking){ intent.type="*/*";intent.putExtra(Intent.EXTRA_MIME_TYPES,if(call.method=="pickPhoto") arrayOf("image/jpeg","image/png") else arrayOf("image/jpeg","image/png","application/pdf")) }
             else {intent.type=call.argument<String>("mime");intent.putExtra(Intent.EXTRA_TITLE,if(intent.type=="application/pdf") "CampusVibe-notes.pdf" else "CampusVibe-image.jpg");saving=call.argument<ByteArray>("bytes")}
             pending=result
             try{ startActivityForResult(intent,if(picking) 701 else 702) }

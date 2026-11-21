@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'room.dart';
 import 'study_widgets.dart';
+import 'campus_style.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -65,27 +66,14 @@ class CampusVibe extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         title: 'CampusVibe',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-            useMaterial3: true,
-            scaffoldBackgroundColor: cream,
-            colorScheme: ColorScheme.fromSeed(seedColor: plum),
-            appBarTheme: const AppBarTheme(
-                backgroundColor: cream, foregroundColor: plum),
-            filledButtonTheme: FilledButtonThemeData(
-                style: FilledButton.styleFrom(backgroundColor: plum, foregroundColor: Colors.white, minimumSize: const Size(64,46))),
-            inputDecorationTheme: InputDecorationTheme(
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14)))),
+        theme: campusTheme(Brightness.light),
         home: initialToken == null
             ? (showWelcome ? Builder(builder:(ctx)=>WelcomePage(onContinue:() async {
                   await storage.write(key:"welcomed",value:"yes");
                   if(ctx.mounted)Navigator.pushReplacement(ctx,MaterialPageRoute(builder:(_)=>const EntryPage()));
                 })) : const EntryPage())
             : HomePage(token: initialToken!),
-        darkTheme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-                seedColor: lavender, brightness: Brightness.dark)),
+        darkTheme: campusTheme(Brightness.dark),
       );
 }
 
@@ -104,6 +92,7 @@ class _EntryPageState extends State<EntryPage> {
   final password = TextEditingController();
   final name = TextEditingController();
   bool registering = false;
+  bool hidePassword=true;
 
   @override
   void initState() {
@@ -216,16 +205,16 @@ class _EntryPageState extends State<EntryPage> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.asset('assets/campus_evening.webp',height:90,width:180,fit:BoxFit.cover)),
-              const SizedBox(height: 12),
-              const Text('CampusVibe', style: TextStyle(
-                fontSize: 35, fontWeight: FontWeight.bold, color: plum)),
-              const Text('Study. Connect. Vibe.'),
-              const SizedBox(height: 18),
-              Text(registering ? 'Create your account' : 'Welcome back 👋',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 20),
+              ClipRRect(borderRadius:BorderRadius.circular(18),child:Image.asset('assets/waves.webp',width:420,height:80,fit:BoxFit.cover)),
+              const SizedBox(height:18),
+              Align(alignment:Alignment.centerLeft,child:Text(registering?'Create your account':'Welcome back 👋',style:Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight:FontWeight.w800))),
+              const SizedBox(height:4),
+              Align(alignment:Alignment.centerLeft,child:Text(registering?'Join your campus community':'Sign in to your CampusVibe account')),
+              const SizedBox(height:18),
+              SizedBox(width:double.infinity,child:SegmentedButton<bool>(showSelectedIcon:false,segments:const [
+                ButtonSegment(value:false,label:Text('Login')),ButtonSegment(value:true,label:Text('Sign Up'))],
+                selected:{registering},onSelectionChanged:busy?null:(v)=>setState((){registering=v.first;error='';}))),
+              const SizedBox(height:20),
               if (registering) ...[
                 TextField(controller: name, enabled: !busy, maxLength: 120,
                     decoration: const InputDecoration(labelText: 'Full name')),
@@ -236,10 +225,11 @@ class _EntryPageState extends State<EntryPage> {
                   autofillHints: const [AutofillHints.email],
                   decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline))),
               const SizedBox(height: 12),
-              TextField(controller: password, enabled: !busy, obscureText: true,
+              TextField(controller: password, enabled: !busy, obscureText: hidePassword,
                   maxLength: registering ? 128 : null,
                   onSubmitted: (_) => withEmail(),
                   decoration: InputDecoration(labelText: 'Password', prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon:IconButton(tooltip:hidePassword?'Show password':'Hide password',icon:Icon(hidePassword?Icons.visibility_outlined:Icons.visibility_off_outlined),onPressed:()=>setState(()=>hidePassword=!hidePassword)),
                     helperText: registering ? 'Use at least 10 characters' : null)),
               if (error.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error))),
@@ -269,6 +259,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int tab = 0;
+  int discoveryMode=0;
   Map<String, dynamic>? profile;
   final college = TextEditingController();
   final branch = TextEditingController();
@@ -354,6 +345,9 @@ class _HomePageState extends State<HomePage> {
                     content: SingleChildScrollView(
                         child:
                             Column(mainAxisSize: MainAxisSize.min, children: [
+                      Image.asset('assets/bot.webp',height:88),
+                      const Text('Your personal study companion',style:TextStyle(fontWeight:FontWeight.w700)),
+                      Wrap(spacing:6,children:[for(final topic in ['Explain a concept','Create a quiz','Summarize notes']) ActionChip(label:Text(topic),onPressed:()=>prompt.value=TextEditingValue(text:'$topic: ',selection:TextSelection.collapsed(offset:topic.length+2)))]),
                       TextField(
                           controller: prompt,
                           maxLines: 3,
@@ -470,24 +464,22 @@ class _HomePageState extends State<HomePage> {
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
                     if (rows.isEmpty) const Text('No upcoming meetups.'),
                     for (final e in rows)
-                      ListTile(
-                          title: Text(e['title']),
-                          subtitle: Text(
-                              '${e["place"]} · ${DateTime.parse(e["starts"]).toLocal()}'),
-                          trailing: TextButton(
-                              onPressed: e['going']
-                                  ? null
-                                  : () async {
-                                      try {
-                                        await postData(
-                                            '/events/${e["id"]}/rsvp', {});
-                                        if (d.mounted) Navigator.pop(d);
-                                        notify('RSVP saved');
-                                      } catch (err) {
-                                        notify('$err');
-                                      }
-                                    },
-                              child: Text(e['going'] ? 'Going' : 'RSVP')))
+                      Card(child:ListTile(leading:const Icon(Icons.calendar_today_outlined),title:Text(e['title']),
+                        subtitle:Text(e['place']),trailing:const Icon(Icons.chevron_right),onTap:() async {
+                          final going=await Navigator.push<bool>(d,MaterialPageRoute(builder:(page)=>Scaffold(
+                            appBar:AppBar(title:const Text('Event details')),
+                            body:ListView(padding:const EdgeInsets.all(20),children:[
+                              ClipRRect(borderRadius:BorderRadius.circular(20),child:Image.asset('assets/campus_evening.webp',height:180,fit:BoxFit.cover)),
+                              const SizedBox(height:18),Text(e['title'],style:Theme.of(page).textTheme.headlineMedium),
+                              ListTile(leading:const Icon(Icons.schedule),title:Text(DateTime.parse(e['starts']).toLocal().toString().split('.').first)),
+                              ListTile(leading:const Icon(Icons.location_on_outlined),title:Text(e['place'])),
+                              FilledButton(onPressed:e['going']==true?null:() async{
+                                try{await postData('/events/${e["id"]}/rsvp',{});if(page.mounted)Navigator.pop(page,true);}
+                                catch(err){notify('$err');}
+                              },child:Text(e['going']==true?'Going':'RSVP now'))
+                            ]))));
+                          if(going==true && d.mounted){Navigator.pop(d);notify('RSVP saved');}
+                        }))
                   ])),
                   actions: [
                     TextButton(
@@ -555,12 +547,13 @@ class _HomePageState extends State<HomePage> {
         context: context,
         builder: (ctx) => StatefulBuilder(
             builder: (ctx, update) => AlertDialog(
-                    title: const Text('Campus membership'),
+                    title: const Text('Verify your college'),
                     content: SingleChildScrollView(
                         child: Column(
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                          Center(child:Image.asset('assets/college.webp',height:90)),
                           Text(v['college_ok'] == true
                               ? 'Enrollment verified'
                               : 'Save your college in Profile, then submit for moderator review.'),
@@ -772,13 +765,13 @@ class _HomePageState extends State<HomePage> {
                       onPressed: action,
                       icon: const Icon(Icons.arrow_forward_ios, size: 17))));
   Widget discoverPage() => DefaultTabController(
-      length: 3,
+      length: 3,initialIndex:discoveryMode,
       child: Column(children: [
-        const TabBar(tabs: [
+        Padding(padding:const EdgeInsets.symmetric(vertical:8),child:DecoratedBox(decoration:BoxDecoration(color:Theme.of(context).colorScheme.surfaceContainerHigh,borderRadius:BorderRadius.circular(30)),child:const TabBar(tabs: [
           Tab(text: 'Study'),
           Tab(text: 'Friends'),
           Tab(text: 'Dating')
-        ]),
+        ]))),
         Expanded(
             child: TabBarView(children: [
           for (final mode in ['study', 'friend', 'dating'])
@@ -803,6 +796,8 @@ class _HomePageState extends State<HomePage> {
                         return Card(clipBehavior:Clip.antiAlias,margin:const EdgeInsets.symmetric(vertical:8,horizontal:4),
                           child:Padding(padding:const EdgeInsets.all(18),child:Column(
                             crossAxisAlignment:CrossAxisAlignment.start,children:[
+                              ClipRRect(borderRadius:BorderRadius.circular(14),child:portrait(p,mode)),
+                              const SizedBox(height:12),
                               Row(children:[CircleAvatar(radius:24,backgroundColor:const Color(0xffedd9f1),
                                 child:Text((p['name'] as String? ?? '').characters.take(1).toString(),style:const TextStyle(color:plum))),
                                 const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -827,16 +822,9 @@ class _HomePageState extends State<HomePage> {
               child: Text(
                   s.hasError ? 'Unable to load books' : 'Loading books...'));
         final books = s.data as List;
-        return ListView(children: [
-          FilledButton.icon(
-              onPressed: addBook,
-              icon: const Icon(Icons.add),
-              label: const Text('List a book')),
-          if (books.isEmpty)
-            const Padding(
-                padding: EdgeInsets.all(30),
-                child: Text('No books listed yet')),
-          for (final b in books)
+        return SearchableCampusList(rows:books,hint:'Search books, authors…',fields:const ['title','author','condition'],
+          filters:const ['Free','For sale'],matches:(b,f)=>f=='Free'?b['price']==0:b['price']>0,
+          empty:'No books listed yet',action:FilledButton.icon(onPressed:addBook,icon:const Icon(Icons.add),label:const Text('List a book')),item:(b)=>
             tile(Icons.menu_book, b['title'], '${b['author']} • ₹${b['price']}',
                 action: () => showDialog(
                     context: context,
@@ -860,8 +848,7 @@ class _HomePageState extends State<HomePage> {
                                     }
                                   },
                                   child: const Text('Reserve'))
-                            ])))
-        ]);
+                            ]))));
       });
   Widget chatsPage() => FutureBuilder<dynamic>(
       future: getData('/connections'),
@@ -871,11 +858,9 @@ class _HomePageState extends State<HomePage> {
               child: Text(
                   s.hasError ? 'Unable to load connections' : 'Loading...'));
         final connections = s.data as List;
-        return ListView(children: [
-          const Padding(
-              padding: EdgeInsets.all(10),
-              child: Text('Accept a study request to start chatting and sharing notes.')),
-          for (final c in connections)
+        return SearchableCampusList(rows:connections,hint:'Search conversations…',fields:const ['peer_name','kind'],
+          filters:const ['Accepted','Pending'],matches:(c,f)=>c['status']==f.toLowerCase(),
+          empty:'Your study requests and conversations will appear here.',item:(c)=>
             tile(Icons.chat, '${c['peer_name']} · ${c['kind']}',
                 'Status: ${c['status']}', action: () async {
               if (c['status'] == 'pending' &&
@@ -897,9 +882,32 @@ class _HomePageState extends State<HomePage> {
                           builder: (_) =>
                               ChatPage(token: widget.token, peerId: peer)));
               }
-            })
-        ]);
+            }));
       });
+  Future<void> choosePortrait() async {
+    try {
+      final bytes=await const MethodChannel('campusvibe/files').invokeMethod<Uint8List>('pickPhoto');
+      if(bytes==null)return;
+      final req=http.MultipartRequest('PUT',Uri.parse('$api/profile/photo'))
+        ..headers['Authorization']='Bearer ${widget.token}'
+        ..files.add(http.MultipartFile.fromBytes('file',bytes,filename:'portrait'));
+      final result=await req.send().timeout(const Duration(seconds:75));
+      if(result.statusCode!=200){notify('Choose a JPEG or PNG up to 4 MB.');return;}
+      await load();
+    }catch(_){notify('Could not save the photo. Please try again.');}
+  }
+
+  Widget portrait(Map person,String kind,{double height=210}){
+    final fallback=Container(height:height,alignment:Alignment.center,decoration:const BoxDecoration(
+      gradient:LinearGradient(colors:[Color(0xffe9ceec),Color(0xffc7b3dc)])),child:Text(
+        (person['name'] as String? ?? '').characters.take(1).toString(),
+        style:TextStyle(fontSize:height*.4,fontWeight:FontWeight.bold,color:plum)));
+    if(person['photo_version']==null)return fallback;
+    return Image.network('$api/profile/photo/${person["id"]}?kind=$kind&v=${person["photo_version"]}',
+      headers:{'Authorization':'Bearer ${widget.token}'},fit:BoxFit.cover,height:height,width:double.infinity,
+      errorBuilder:(_,__,___)=>fallback);
+  }
+
   Future<void> editStudy() async {
     if(profile==null){await load();if(!mounted || profile==null){notify('Profile unavailable. Check your connection.');return;}}
     final saved = await Navigator.push<bool>(context,MaterialPageRoute(builder:(_)=>StudyProfileEditor(
@@ -909,10 +917,10 @@ class _HomePageState extends State<HomePage> {
         },body:jsonEncode({'college':college,'labels':labels,'visible':visible})).timeout(const Duration(seconds:75));
         if(r.statusCode!=200) throw Exception('Save failed');
       })));
-    if(saved==true && mounted){await load();if(mounted)setState(()=>tab=profile?['study_visible']==true?1:4);}
+    if(saved==true && mounted){await load();if(mounted)setState((){discoveryMode=0;tab=profile?['study_visible']==true?1:4;});}
   }
   void findStudy() {
-    if(profile?['study_visible']==true){setState(()=>tab=1);}else{editStudy();}
+    if(profile?['study_visible']==true){setState((){discoveryMode=0;tab=1;});}else{editStudy();}
   }
 
   Widget homePage() => ListView(children: [
@@ -924,25 +932,29 @@ class _HomePageState extends State<HomePage> {
             const Text('Study Together',style:TextStyle(fontSize:23,fontWeight:FontWeight.w800,color:plum)),
             const Text('Find people preparing for the same subjects.',style:TextStyle(color:plum)),
             const SizedBox(height:8),FilledButton(onPressed:findStudy,child:const Text('Find study partner'))
-          ]))),Expanded(child:Image.asset('assets/study_group.webp',fit:BoxFit.cover,height:156))])),
+          ]))),Expanded(child:Image.asset('assets/campus_pair.webp',fit:BoxFit.cover,height:156))])),
         const SizedBox(height:18),
-        GridView.count(shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),crossAxisCount:3,childAspectRatio:1.2,children:[
+        GridView.count(shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),crossAxisCount:4,childAspectRatio:0.93,children:[
           for(final item in <(IconData,String,VoidCallback)>[
             (Icons.school_outlined,'Study',findStudy),
+            (Icons.favorite_outline,'Dating',()=>setState((){discoveryMode=2;tab=1;})),
+            (Icons.people_outline,'Friends',()=>setState((){discoveryMode=1;tab=1;})),
             (Icons.menu_book_outlined,'Books',()=>setState(()=>tab=2)),
-            (Icons.forum_outlined,'Chats',()=>setState(()=>tab=3)),
+
             (Icons.groups_outlined,'Circles',()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>CommunitiesPage(token:widget.token)))),
             (Icons.event_outlined,'Events',openEvents),
-            (Icons.auto_awesome,'Study AI',studyAssistant)])
+            (Icons.auto_awesome,'Study AI',studyAssistant),(Icons.more_horiz,'Profile',()=>setState(()=>tab=4))])
             Card(child:InkWell(onTap:item.$3,child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
               Icon(item.$1,color:lavender),const SizedBox(height:6),Text(item.$2)])))
         ]),
         const SizedBox(height:16),
+        tile(Icons.event_outlined,'Upcoming on campus','See events and RSVP',action:openEvents),
         tile(Icons.badge_outlined,'Your study profile',(profile?['interests'] as List? ?? []).join(' · '),action:editStudy)
       ]);
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
+          leading:tab==0?Padding(padding:const EdgeInsets.all(10),child:Image.asset('assets/mark.png')):null,
           title: Text(['CampusVibe','Discover','Books','Chats','Profile'][tab], style: const TextStyle(fontWeight: FontWeight.bold)),
           actions: [
             IconButton(onPressed: logout, icon: const Icon(Icons.logout))
@@ -958,6 +970,8 @@ class _HomePageState extends State<HomePage> {
                       : tab == 3
                           ? chatsPage()
                           : ListView(children: [
+                              Center(child:Column(children:[ClipOval(child:SizedBox(width:96,height:96,child:portrait(profile ?? {},'study',height:96))),
+                                TextButton.icon(onPressed:choosePortrait,icon:const Icon(Icons.photo_camera_outlined),label:const Text('Change photo'))])),
                               Text(profile?['name'] ?? 'Your profile',
                                   style: Theme.of(context)
                                       .textTheme
@@ -1284,6 +1298,7 @@ class _CommunitiesPageState extends State<CommunitiesPage> {
               for (final c in items)
                 Card(
                     child: ListTile(
+                        leading:const CircleAvatar(child:Icon(Icons.groups_outlined)),
                         title: Text(c['name']),
                         onTap: () => Navigator.push(
                             context,

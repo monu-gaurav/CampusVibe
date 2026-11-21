@@ -12,8 +12,7 @@ class WelcomePage extends StatelessWidget {
                   child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 440),
                       child: Column(children: [
-                        const Icon(Icons.school_rounded,
-                            size: 42, color: Color(0xff814a91)),
+                        Image.asset('assets/mark.png',height:48),
                         Text('CampusVibe',
                             style: Theme.of(context)
                                 .textTheme
