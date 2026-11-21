@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'room.dart';
+import 'study_widgets.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -7,9 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-const plum = Color(0xFF352044);
+const plum = Color(0xFF65356F);
 const lavender = Color(0xFFA88BDB);
-const cream = Color(0xFFFFF8F0);
+const cream = Color(0xFFFFF8FB);
 const packagedServer = String.fromEnvironment('API_BASE_URL', defaultValue: 'https://campusvibe-monu-pilot.onrender.com');
 String api = packagedServer;
 String httpsOrigin(String value) {
@@ -52,12 +53,14 @@ Future<void> main() async {
   }
   if (api.isNotEmpty) await storage.write(key: 'pilot', value: api);
   final token = await storage.read(key: 'token');
-  runApp(CampusVibe(initialToken: token));
+  final welcomed = await storage.read(key: 'welcomed') == 'yes';
+  runApp(CampusVibe(initialToken: token, showWelcome: !welcomed));
 }
 
 class CampusVibe extends StatelessWidget {
   final String? initialToken;
-  const CampusVibe({super.key, this.initialToken});
+  final bool showWelcome;
+  const CampusVibe({super.key, this.initialToken, this.showWelcome = false});
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'CampusVibe',
@@ -69,12 +72,15 @@ class CampusVibe extends StatelessWidget {
             appBarTheme: const AppBarTheme(
                 backgroundColor: cream, foregroundColor: plum),
             filledButtonTheme: FilledButtonThemeData(
-                style: FilledButton.styleFrom(backgroundColor: plum)),
+                style: FilledButton.styleFrom(backgroundColor: plum, foregroundColor: Colors.white, minimumSize: const Size(64,46))),
             inputDecorationTheme: InputDecorationTheme(
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16)))),
+                    borderRadius: BorderRadius.circular(14)))),
         home: initialToken == null
-            ? const EntryPage()
+            ? (showWelcome ? Builder(builder:(ctx)=>WelcomePage(onContinue:() async {
+                  await storage.write(key:"welcomed",value:"yes");
+                  if(ctx.mounted)Navigator.pushReplacement(ctx,MaterialPageRoute(builder:(_)=>const EntryPage()));
+                })) : const EntryPage())
             : HomePage(token: initialToken!),
         darkTheme: ThemeData(
             useMaterial3: true,
@@ -210,13 +216,13 @@ class _EntryPageState extends State<EntryPage> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.school_rounded, size: 78, color: plum),
+              ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.asset('assets/campus_evening.webp',height:90,width:180,fit:BoxFit.cover)),
               const SizedBox(height: 12),
               const Text('CampusVibe', style: TextStyle(
                 fontSize: 35, fontWeight: FontWeight.bold, color: plum)),
               const Text('Study. Connect. Vibe.'),
-              const SizedBox(height: 36),
-              const Text('Welcome to your campus community',
+              const SizedBox(height: 18),
+              Text(registering ? 'Create your account' : 'Welcome back 👋',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
@@ -228,12 +234,12 @@ class _EntryPageState extends State<EntryPage> {
               TextField(controller: email, enabled: !busy, autocorrect: false,
                   keyboardType: TextInputType.emailAddress,
                   autofillHints: const [AutofillHints.email],
-                  decoration: const InputDecoration(labelText: 'Email')),
+                  decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline))),
               const SizedBox(height: 12),
               TextField(controller: password, enabled: !busy, obscureText: true,
                   maxLength: registering ? 128 : null,
                   onSubmitted: (_) => withEmail(),
-                  decoration: InputDecoration(labelText: 'Password',
+                  decoration: InputDecoration(labelText: 'Password', prefixIcon: const Icon(Icons.lock_outline),
                     helperText: registering ? 'Use at least 10 characters' : null)),
               if (error.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error))),
@@ -431,7 +437,7 @@ class _HomePageState extends State<HomePage> {
                         try {
                           await postData('/email/send', {});
                           notify(
-                              'Code sent. Local development codes are in backend/dev-mail.');
+                              'Check your email for the verification code.');
                         } catch (e) {
                           notify('$e');
                         }
@@ -754,6 +760,7 @@ class _HomePageState extends State<HomePage> {
           {VoidCallback? action}) =>
       Card(
           child: ListTile(
+              onTap: action,
               leading: CircleAvatar(
                   backgroundColor: const Color(0xFFEBD8F3),
                   child: Icon(icon, color: plum)),
@@ -775,7 +782,7 @@ class _HomePageState extends State<HomePage> {
         Expanded(
             child: TabBarView(children: [
           for (final mode in ['study', 'friend', 'dating'])
-            FutureBuilder<dynamic>(
+            if(mode=='study' && profile?['study_visible']!=true) Center(child:FilledButton.icon(onPressed:editStudy,icon:const Icon(Icons.school_outlined),label:const Text('Set up study profile'))) else FutureBuilder<dynamic>(
                 future: getData('/discover?kind=$mode'),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData)
@@ -787,24 +794,27 @@ class _HomePageState extends State<HomePage> {
                   if (students.isEmpty)
                     return const Center(
                         child: Text(
-                            'No students registered yet. Invite your classmates!'));
+                            'No matching profiles here yet. Invite a classmate from your college.'));
                   return ListView.builder(
                       itemCount: students.length,
                       itemBuilder: (context, i) {
                         final p = students[i];
-                        return Card(
-                            child: ListTile(
-                                leading: const CircleAvatar(
-                                    child: Icon(Icons.person)),
-                                title: Text(p['name'] ?? ''),
-                                subtitle: Text(
-                                    '${p['college'] ?? ''} • ${p['branch'] ?? ''}\nShared: ${(p['shared_interests'] as List).join(', ')}'),
-                                isThreeLine: true,
-                                trailing: IconButton(
-                                    icon: const Icon(Icons.person_add_alt_1,
-                                        color: plum),
-                                    onPressed: () =>
-                                        sendRequest(p['id'], mode))));
+                        final shared = List<String>.from(p['shared_interests'] ?? []);
+                        return Card(clipBehavior:Clip.antiAlias,margin:const EdgeInsets.symmetric(vertical:8,horizontal:4),
+                          child:Padding(padding:const EdgeInsets.all(18),child:Column(
+                            crossAxisAlignment:CrossAxisAlignment.start,children:[
+                              Row(children:[CircleAvatar(radius:24,backgroundColor:const Color(0xffedd9f1),
+                                child:Text((p['name'] as String? ?? '').characters.take(1).toString(),style:const TextStyle(color:plum))),
+                                const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                                  Text(p['name'] ?? '',style:Theme.of(context).textTheme.titleLarge),
+                                  Text([p['college'],p['branch']].whereType<String>().where((s)=>s.isNotEmpty).join(' · '))
+                                ]))]),
+                              if((p['bio'] ?? '').toString().isNotEmpty) Padding(padding:const EdgeInsets.only(top:12),child:Text(p['bio'])),
+                              if(shared.isNotEmpty) Padding(padding:const EdgeInsets.only(top:10),child:Wrap(spacing:6,children:[for(final tag in shared) Chip(label:Text(tag))])),
+                              const SizedBox(height:10),Align(alignment:Alignment.centerRight,child:FilledButton.tonalIcon(
+                                onPressed:()=>sendRequest(p['id'],mode),icon:const Icon(Icons.person_add_alt_1),label:const Text('Send request')))
+                            ])));
+
                       });
                 })
         ]))
@@ -864,7 +874,7 @@ class _HomePageState extends State<HomePage> {
         return ListView(children: [
           const Padding(
               padding: EdgeInsets.all(10),
-              child: Text('Accepted connections can message each other.')),
+              child: Text('Accept a study request to start chatting and sharing notes.')),
           for (final c in connections)
             tile(Icons.chat, '${c['peer_name']} · ${c['kind']}',
                 'Status: ${c['status']}', action: () async {
@@ -890,52 +900,50 @@ class _HomePageState extends State<HomePage> {
             })
         ]);
       });
+  Future<void> editStudy() async {
+    if(profile==null){await load();if(!mounted || profile==null){notify('Profile unavailable. Check your connection.');return;}}
+    final saved = await Navigator.push<bool>(context,MaterialPageRoute(builder:(_)=>StudyProfileEditor(
+      profile:profile!,submit:(college,labels,visible) async {
+        final r=await http.put(Uri.parse('$api/profile/study'),headers:{
+          'Authorization':'Bearer ${widget.token}','Content-Type':'application/json'
+        },body:jsonEncode({'college':college,'labels':labels,'visible':visible})).timeout(const Duration(seconds:75));
+        if(r.statusCode!=200) throw Exception('Save failed');
+      })));
+    if(saved==true && mounted){await load();if(mounted)setState(()=>tab=profile?['study_visible']==true?1:4);}
+  }
+  void findStudy() {
+    if(profile?['study_visible']==true){setState(()=>tab=1);}else{editStudy();}
+  }
+
   Widget homePage() => ListView(children: [
         Text('Hi, ${profile?['name'] ?? 'Student'} 👋',
             style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 15),
-        Card(
-            color: const Color(0xFFF2DDF4),
-            child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Study Together',
-                          style: TextStyle(
-                              fontSize: 25,
-                              fontWeight: FontWeight.bold,
-                              color: plum)),
-                      const Text('Find a study partner, ace your goals'),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                          onPressed: () => setState(() => tab = 1),
-                          child: const Text('Find Study Partner'))
-                    ]))),
-        const SizedBox(height: 16),
-        const Text('Your campus',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        tile(Icons.school, 'Student discovery',
-            'Find study partners and friends',
-            action: () => setState(() => tab = 1)),
-        tile(Icons.menu_book, 'Book Exchange', 'Share and reserve textbooks',
-            action: () => setState(() => tab = 2)),
-        tile(Icons.school_outlined, 'AI study assistant',
-            'Questions, quizzes and revision plans',
-            action: studyAssistant),
-        tile(Icons.event, 'Campus events', 'Create a meetup or RSVP',
-            action: openEvents),
-        tile(Icons.groups, 'Campus Communities', 'Browse and join groups',
-            action: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => CommunitiesPage(token: widget.token))))
+        Card(color:const Color(0xffeed7f1),clipBehavior:Clip.antiAlias,child:Row(children:[
+          Expanded(child:Padding(padding:const EdgeInsets.fromLTRB(16,18,4,18),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            const Text('Study Together',style:TextStyle(fontSize:23,fontWeight:FontWeight.w800,color:plum)),
+            const Text('Find people preparing for the same subjects.',style:TextStyle(color:plum)),
+            const SizedBox(height:8),FilledButton(onPressed:findStudy,child:const Text('Find study partner'))
+          ]))),Expanded(child:Image.asset('assets/study_group.webp',fit:BoxFit.cover,height:156))])),
+        const SizedBox(height:18),
+        GridView.count(shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),crossAxisCount:3,childAspectRatio:1.2,children:[
+          for(final item in <(IconData,String,VoidCallback)>[
+            (Icons.school_outlined,'Study',findStudy),
+            (Icons.menu_book_outlined,'Books',()=>setState(()=>tab=2)),
+            (Icons.forum_outlined,'Chats',()=>setState(()=>tab=3)),
+            (Icons.groups_outlined,'Circles',()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>CommunitiesPage(token:widget.token)))),
+            (Icons.event_outlined,'Events',openEvents),
+            (Icons.auto_awesome,'Study AI',studyAssistant)])
+            Card(child:InkWell(onTap:item.$3,child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+              Icon(item.$1,color:lavender),const SizedBox(height:6),Text(item.$2)])))
+        ]),
+        const SizedBox(height:16),
+        tile(Icons.badge_outlined,'Your study profile',(profile?['interests'] as List? ?? []).join(' · '),action:editStudy)
       ]);
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
-          title: const Text('CampusVibe',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          title: Text(['CampusVibe','Discover','Books','Chats','Profile'][tab], style: const TextStyle(fontWeight: FontWeight.bold)),
           actions: [
             IconButton(onPressed: logout, icon: const Icon(Icons.logout))
           ]),
@@ -975,7 +983,8 @@ class _HomePageState extends State<HomePage> {
                               FilledButton(
                                   onPressed: save,
                                   child: const Text('Save profile')),
-                              if (profile?['email_verified'] != true)
+                              OutlinedButton.icon(onPressed:editStudy,icon:const Icon(Icons.school_outlined),label:const Text('Edit study interests and visibility')),
+                              if (profile?['email_verified'] != true && profile?['email_delivery']==true)
                                 OutlinedButton(
                                     onPressed: emailCode,
                                     child: const Text('Verify email')),

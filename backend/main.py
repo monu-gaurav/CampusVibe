@@ -5,7 +5,7 @@ import jwt
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import (
-    create_engine,
+    create_engine, Boolean, func,
     Column,
     Integer,
     String,
@@ -47,6 +47,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     name = Column(String(120), nullable=False)
+    study_visible = Column(Boolean, nullable=True)
     college = Column(String(160), default="")
     branch = Column(String(120), default="")
     bio = Column(String(500), default="")
@@ -161,6 +162,8 @@ def profile_me(u: User = Depends(current_user), db: Session = Depends(db_session
     v = db.get(Verification, u.id)
     return {
         **view(u),
+        "study_visible": study_visible(u, v),
+        "email_delivery": bool(mobile_config()["email_signup"]),
         "email_verified": bool(
             db.get(EmailChallenge, u.id) and db.get(EmailChallenge, u.id).verified
         ),
@@ -348,6 +351,8 @@ def accepted(db, a, b):
         )
     ):
         try:
+            if conn.kind == "study":
+                return not blocked(db, a, b)
             validate_pair(db, db.get(User, a), b, conn.kind)
             return True
         except HTTPException:
@@ -371,6 +376,33 @@ def set_interests(
     return {"interests": labels}
 
 
+def study_visible(user, verification):
+    if user.study_visible is not None:
+        return user.study_visible
+    return bool(verification and verification.college_ok)
+
+class StudyProfile(BaseModel):
+    college: str = Field(min_length=2, max_length=160)
+    labels: list[str] = Field(max_length=15)
+    visible: bool
+
+@app.put("/profile/study")
+def save_study_profile(body: StudyProfile, u=Depends(current_user), db=Depends(db_session)):
+    from sqlalchemy import delete
+    college = body.college.strip()
+    labels = sorted({item.strip().lower() for item in body.labels if item.strip()})
+    if len(college) < 2 or (body.visible and not labels) or any(len(x)>80 for x in labels):
+        raise HTTPException(422, "Enter your college and at least one study interest.")
+    verification = db.get(Verification, u.id)
+    if verification and college.casefold() != u.college.strip().casefold():
+        verification.college_ok = verification.dating = False
+    u.college = college
+    u.study_visible = body.visible
+    db.execute(delete(Interest).where(Interest.user_id == u.id))
+    db.add_all(Interest(user_id=u.id,label=label) for label in labels)
+    db.commit()
+    return {"visible": body.visible, "interests": labels}
+
 @app.get("/discover")
 def discover(
     kind: str = "study",
@@ -379,7 +411,9 @@ def discover(
 ):
     if kind not in ("study", "friend", "dating"):
         raise HTTPException(400, "Invalid discovery mode")
-    mine_v = require_member(db, u)
+    mine_v = db.get(Verification, u.id) if kind == "study" else require_member(db, u)
+    if kind == "study" and not (u.college.strip() and study_visible(u, mine_v)):
+        raise HTTPException(403, "Complete your study profile to find partners.")
     if kind == "dating" and not (
         mine_v.adult_checked and mine_v.dating and adult(mine_v.dob)
     ):
@@ -387,14 +421,12 @@ def discover(
     mine = {
         x.label for x in db.scalars(select(Interest).where(Interest.user_id == u.id))
     }
-    candidates = db.scalars(
-        select(User)
-        .join(Verification, Verification.user_id == User.id)
-        .where(
-            User.id != u.id, Verification.college_ok == True, User.college == u.college
-        )
-        .limit(100)
-    ).all()
+    eligible = func.coalesce(User.study_visible, Verification.college_ok, False) if kind == "study" else Verification.college_ok
+    overlap = (select(func.count(Interest.id)).where(Interest.user_id == User.id,
+               Interest.label.in_(mine)).correlate(User).scalar_subquery())
+    candidates = db.scalars(select(User).outerjoin(Verification, Verification.user_id == User.id)
+        .where(User.id != u.id, eligible == True, func.lower(User.college) == u.college.lower())
+        .order_by(overlap.desc(), User.id).limit(100)).all()
     out = []
     for person in candidates:
         if blocked(db, u.id, person.id) or (
@@ -729,10 +761,14 @@ def validate_pair(db, u, peer, kind):
     if (
         not other
         or u.id == peer
-        or u.college != other.college
+        or u.college.casefold() != other.college.casefold()
         or blocked(db, u.id, peer)
     ):
         raise HTTPException(403, "Connection unavailable")
+    if kind == "study":
+        if not u.college.strip() or not all(study_visible(person, db.get(Verification, person.id)) for person in (u, other)):
+            raise HTTPException(403, "Study profile is private.")
+        return
     a = require_member(db, u)
     b = require_member(db, other)
     if kind == "dating" and not compatible(a, b):

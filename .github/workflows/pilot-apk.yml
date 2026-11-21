@@ -19,7 +19,7 @@ jobs:
         with:
           flutter-version: '3.35.7'
           cache: true
-      - name: Verify email entry and build signed pilot
+      - name: Test study login and build Android pilot
         working-directory: mobile
         run: |
           flutter pub get

@@ -265,3 +265,24 @@ def test_google_rejects_bad_token_and_existing_password_account(monkeypatch):
 def test_disabled_google(monkeypatch):
     monkeypatch.delenv("GOOGLE_WEB_CLIENT_ID",raising=False)
     assert c.post("/auth/google",json={"id_token":"x"*40}).status_code==503
+
+def test_normal_login_study_chat_without_otp():
+    people = []
+    for n in (120,121):
+        data = {"name":f"Student {n}","email":f"study{n}@example.org","password":"test-password-2026"}
+        uid = c.post("/auth/register",json=data).json()["id"]
+        h = {"Authorization":"Bearer "+c.post("/auth/login",json=data).json()["access_token"]}
+        assert c.put("/profile/study",headers=h,json={"college":"Test Campus","labels":["DBMS"],"visible":True}).status_code == 200
+        assert c.get("/discover?kind=dating",headers=h).status_code == 403
+        people.append((uid,h))
+    (a,ha),(b,hb)=people
+    assert c.get("/discover",headers=ha).json()[0]["shared_interests"]==["dbms"]
+    assert c.get(f"/messages/{b}",headers=ha).status_code==403
+    edge=c.post("/connections",headers=ha,json={"receiver_id":b,"kind":"study"}).json()["id"]
+    assert c.post(f"/connections/{edge}/accept",headers=hb).status_code==200
+    assert c.post("/messages",headers=ha,json={"receiver_id":b,"body":"Study tonight?"}).status_code==201
+    with c.websocket_connect(f"/live/{a}",headers=hb) as ws:
+        assert ws.receive_json()[0]["body"]=="Study tonight?"
+    c.put("/profile/study",headers=hb,json={"college":"Test Campus","labels":[],"visible":False})
+    assert not c.get("/discover",headers=ha).json()
+    assert c.get(f"/messages/{b}",headers=ha).status_code==200
