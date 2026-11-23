@@ -25,7 +25,8 @@ def load_model():
     return tokenizer, ort.InferenceSession(str(root/"model.onnx"),options,providers=["CPUExecutionProvider"])
 
 def sources(question):
-    terms = [t for t in re.findall(r"[\w+-]+",question) if t.lower() not in stop][:16]
+    focus = re.sub(r"^(?:what(?: is| are)? (?:the )?(?:(?:worst.case |average.case |best.case )?(?:time|space) complexity of |definition of |purpose of )?|explain |define )", "", question.strip(), flags=re.I)
+    terms = [t for t in re.findall(r"[\w+-]+",focus) if t.lower() not in stop][:16]
     if not terms:
         return []
     with httpx.Client(timeout=12,headers={"User-Agent":"CampusVibeStudy/0.6 (https://github.com/monu-gaurav/CampusVibe)"}) as client:
@@ -44,6 +45,7 @@ def select_answer(question,pages):
         start,end=model.run(None,{i.name:np.array([inputs[i.name]],dtype=np.int64) for i in model.get_inputs()})
         null=float(start[0,0]+end[0,0])
         positions=[i for i,s in enumerate(tokens.sequence_ids) if s==1]
+        previous_best = best
         for i in positions:
             jmax=min(i+44,positions[-1]+1)
             j=i+int(np.argmax(end[0,i:jmax]))
@@ -58,6 +60,8 @@ def select_answer(question,pages):
                 sentence_end=right+after.end() if after else len(paragraph)
                 context=paragraph[sentence_start:sentence_end].strip()
                 best=(score,phrase,context if len(context)<=650 else phrase,title,url)
+        if best is not previous_best and best[0] >= 2.0:
+            break
     return best
 
 def research(question):
