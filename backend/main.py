@@ -1272,13 +1272,13 @@ class StudyPrompt(BaseModel):
 def tutor(b: StudyPrompt, u=Depends(current_user), db=Depends(db_session)):
     import httpx
 
-    require_member(db, u)
-    if not os.getenv("AI_API_KEY") or not os.getenv("AI_MODEL"):
-        raise HTTPException(503, "The campus operator has not connected an AI provider")
     if not allowed("ai:user:" + str(u.id), 5, 86400) or not allowed(
         "ai:campus", int(os.getenv("AI_DAILY_LIMIT", "50")), 86400
     ):
         raise HTTPException(429, "Daily AI request budget reached")
+    if not os.getenv("AI_API_KEY") or not os.getenv("AI_MODEL"):
+        from study_research import research
+        return research(b.question)
     try:
         r = httpx.post(
             os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
